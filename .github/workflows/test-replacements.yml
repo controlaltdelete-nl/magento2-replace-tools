@@ -1,0 +1,50 @@
+name: test-replacements.yml
+on:
+  push:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        MAGENTO_VERSION: [2.4.6-p5]
+        PACKAGES: [
+          "yireo/magento2-replace-all",
+          "yireo/magento2-replace-content-staging",
+          "yireo/magento2-replace-core",
+          "yireo/magento2-replace-graphql",
+          "yireo/magento2-replace-inventory",
+          "yireo/magento2-replace-sample-data",
+          "yireo/magento2-replace-graphql yireo/magento2-replace-inventory"
+        ]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Start Docker
+        run: docker run --detach --name magento-project-community-edition ghcr.io/controlaltdelete-nl/magento2-in-a-box/magento-project-community-edition:magento${{ matrix.MAGENTO_VERSION }}-sample-data
+
+      - name: Install the extension
+        run: |
+          docker cp $(pwd) magento-project-community-edition:/data/extensions/
+          docker exec magento-project-community-edition composer config --no-plugins allow-plugins.yireo/magento2-replace-tools true
+          docker exec magento-project-community-edition composer require --dev yireo/magento2-replace-tools:@dev --no-install --no-plugins --no-interaction
+
+      - name: Run the replace commands
+        run: |
+          docker exec magento-project-community-edition composer update yireo/magento2-replace-tools --no-security-blocking --with-all-dependencies
+          docker exec magento-project-community-edition composer replace:bulk:add yireo/magento2-replace-all
+          for package in ${{ matrix.PACKAGES }}; do
+            echo "Adding $package"
+            docker exec magento-project-community-edition composer replace:bulk:add "$package"
+          done
+          docker exec magento-project-community-edition composer replace:build
+          docker exec magento-project-community-edition composer update --lock --no-security-blocking
+
+      - name: Validate that bin/magento still works
+        run: |
+          docker exec magento-project-community-edition php bin/magento
+
+      - name: Validate that setup:di:compile still works
+        run: |
+          docker exec magento-project-community-edition php bin/magento setup:di:compile
